@@ -1,0 +1,5 @@
+# Artefatti di build locali dello scheletro Init
+OS/Build/
+
+# Metadati macOS
+.DS_Store

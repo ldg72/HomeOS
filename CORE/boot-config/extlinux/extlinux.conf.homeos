@@ -1,0 +1,27 @@
+## /boot/extlinux/extlinux.conf — Milk-V Mars, HomeOS
+##
+## Il Core riceve initrd come intervallo di memoria: il nome del file e' libero.
+## La riga `linux` deve combaciare col nome del Core presente sulla partizione
+## MARS_BOOT (qui: Exec64Core, l'hash di riferimento e' in CORE/SHA256SUMS).
+##
+## La label `exec64os` resta come rete di sicurezza: permette di riavviare il
+## sistema precedente senza riflashare la scheda.
+
+default homeos
+menu title U-Boot Menu (Milk-V Mars)
+prompt 0
+timeout 20
+
+label homeos
+    menu label HomeOS (HomeOS.img)
+    linux /Exec64Core
+    initrd /HomeOS.img
+    fdtdir /dtbs
+    append console=ttyS0,115200 earlycon
+
+label exec64os
+    menu label Exec64 OS (Exec64OS.img)
+    linux /Exec64Core
+    initrd /Exec64OS.img
+    fdtdir /dtbs
+    append console=ttyS0,115200 earlycon
