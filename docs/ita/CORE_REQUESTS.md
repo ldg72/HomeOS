@@ -225,6 +225,26 @@ usare per dati che contano" è un'informazione preziosa quanto una correzione.
 
 ---
 
+## 7. La finestra non cachata copre esattamente lo schermo a 1080p, e non un byte di piu'
+
+L'alias non cachato della riserva framebuffer e' mappato per `MARSFB_BYTES`:
+1920 x 1080 x 4 = **8.294.400 byte**. A 1080p lo schermo visibile occupa
+esattamente quella misura, quindi non resta un byte per qualunque cosa debba
+essere letta da una periferica senza passare dalla cache.
+
+Il caso concreto: il piano cursore del DC8200 legge la propria immagine via
+DMA, quindi quell'immagine deve stare in memoria non cachata — e a 1080p non
+c'e' posto. L'OS non puo' rimediare, perche' nel resto della RAM l'alias non
+cachato non esiste: e' documentato anche nelle note, ma e' qui che diventa una
+richiesta.
+
+**Richiesta**: una seconda finestra non cachata, anche piccola — 64 KiB
+bastano — in una zona di RAM utilizzabile per i buffer dei dispositivi.
+In alternativa, va dichiarato nel contratto che a 1080p la riserva e' satura e
+che i buffer DMA vanno tenuti altrove; ma allora serve sapere *dove*.
+
+---
+
 ## Cosa non chiediamo
 
 Non chiediamo che il Core diventi un layer di policy filesystem. Il confine

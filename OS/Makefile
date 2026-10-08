@@ -24,7 +24,7 @@ ELF        := $(OUT_DIR)/HomeOS.elf
 IMG        := $(OUT_DIR)/HomeOS.img
 SYS_IMG    := sys/HomeOS-SYS.exfat
 SRCS       := init.c console.c services.c boot.c display.c gfx.c font8x16.c \
-              font_topaz.c fbcon.c splash.c fdt.c \
+              font_topaz.c fbcon.c splash.c fdt.c cursor.c cursor_image.c \
               usb/usb.c usb/usb_hw.c usb/xhci.c usb/hid.c \
               gpio/gpio.c theme.c \
               shell/shell.c $(wildcard shell/cmds/*.c)

@@ -222,6 +222,25 @@ data that matters" is information as valuable as a fix.
 
 ---
 
+## 7. The uncached window covers exactly the screen at 1080p, and not one byte more
+
+The uncached alias of the framebuffer reserve is mapped for `MARSFB_BYTES`:
+1920 x 1080 x 4 = **8,294,400 bytes**. At 1080p the visible screen occupies
+exactly that, so not a single byte is left for anything that has to be read by
+a peripheral without going through the cache.
+
+The concrete case: the DC8200's cursor plane reads its image by DMA, so that
+image must live in uncached memory — and at 1080p there is no room. The OS
+cannot work around it, because elsewhere in RAM the uncached alias does not
+exist: this is documented in the notes too, but here it becomes a request.
+
+**Request**: a second uncached window, even a small one — 64 KiB is enough — in
+a region of RAM usable for device buffers. Alternatively, state in the contract
+that at 1080p the reserve is saturated and that DMA buffers must live
+elsewhere; but then we need to know *where*.
+
+---
+
 ## What we are not asking for
 
 We are not asking the Core to become a filesystem policy layer. The current

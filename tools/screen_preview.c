@@ -27,8 +27,11 @@
 #include <string.h>
 
 #include "fbcon.h"
+#include "gfx.h"
 #include "splash.h"
 #include "theme.h"
+
+#include "cursor_image.h"
 
 /* -------------------------------------------------------- agganci alla scheda */
 
@@ -171,7 +174,63 @@ static int find_theme(const char *name) {
     return -1;
 }
 
+/*
+ * Modalita' --cursors: le forme del puntatore una accanto all'altra, in alto
+ * ingrandite otto volte per giudicare il disegno, sotto a grandezza vera per
+ * giudicare quanto si vedono davvero sullo schermo.
+ */
+static int render_cursors(const char *path) {
+    enum { SCALE = 8, PAD = 24, LABEL = 44, CELL = CURSOR_IMAGE_SIZE };
+    const uint32_t big = CELL * SCALE;
+    const uint32_t column = big + PAD;
+    const uint32_t width = CURSOR_SHAPE_COUNT * column + PAD;
+    const uint32_t height = LABEL + big + PAD + CELL + PAD;
+    uint32_t *pixels = calloc((size_t)width * height, sizeof(uint32_t));
+    static uint32_t image[CURSOR_IMAGE_PIXELS];
+
+    if (!pixels) return 0;
+
+    gfx_init(pixels, width, height);
+    gfx_fill_rect(0, 0, width, height, 0xFF1A2028);
+
+    for (int shape = 0; shape < CURSOR_SHAPE_COUNT; shape++) {
+        const uint32_t x0 = PAD + (uint32_t)shape * column;
+        const uint32_t big_y = LABEL;
+        const uint32_t small_y = LABEL + big + PAD;
+
+        cursor_image_clear(image);
+        cursor_image_draw(image, shape);
+
+        /* Riquadro piu' chiaro: cosi' si vede dove l'immagine e' trasparente. */
+        gfx_fill_rect(x0, big_y, big, big, 0xFF3B4A5A);
+        gfx_fill_rect(x0, small_y, CELL, CELL, 0xFF3B4A5A);
+
+        for (uint32_t y = 0; y < CELL; y++) {
+            for (uint32_t x = 0; x < CELL; x++) {
+                const uint32_t pixel = image[y * CELL + x];
+                if ((pixel >> 24) == 0u) continue;   /* trasparente */
+                gfx_fill_rect(x0 + x * SCALE, big_y + y * SCALE, SCALE, SCALE, pixel);
+                gfx_fill_rect(x0 + x, small_y + y, 1u, 1u, pixel);
+            }
+        }
+
+        gfx_text(x0, 12u, cursor_shape_name(shape), 0xFFE2ECF5u, 2u);
+    }
+
+    if (!write_bmp(path, pixels, width, height)) {
+        free(pixels);
+        return 0;
+    }
+    printf("%s  %ux%u  forme del puntatore\n", path, width, height);
+    free(pixels);
+    return 1;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--cursors") == 0) {
+        return render_cursors("/tmp/cursor-shapes.bmp") ? 0 : 1;
+    }
+
     if (argc == 2 && strcmp(argv[1], "--all") == 0) {
         int ok = 1;
         for (int i = 0; i < theme_count(); i++) {

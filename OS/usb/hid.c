@@ -64,8 +64,16 @@ static const struct xhci_trb *g_ring_base;
 /* Contatori diagnostici. */
 static uint32_t g_reports, g_chars, g_failed;
 
-/* Ripetizione del tasto tenuto: dopo mezzo secondo, poi ogni 50 ms. */
-static uint8_t g_repeat_key;
+/*
+ * Ripetizione dei tasti tenuti: dopo mezzo secondo, poi ogni 50 ms.
+ *
+ * Si ripetono TUTTI i tasti premuti, non solo l'ultimo. Serve al puntatore:
+ * tenendo premute due frecce deve proseguire in diagonale, non piegare da una
+ * parte sola dopo il primo passo.
+ */
+static uint8_t g_held[6];
+static int g_held_count;
+static int g_repeat_armed;
 static uint64_t g_repeat_since;
 static uint64_t g_repeat_last;
 static int g_shift_latched;
@@ -205,7 +213,20 @@ static int key_was_pressed(uint8_t code) {
 
 static void emit_code(uint8_t code) {
     if (code == 0 || code >= 128U) return;
-    char c = (g_shift_latched ? keymap_shift : keymap)[code];
+    char c;
+
+    /* Le frecce non hanno un carattere: si passano come codici a parte,
+     * indipendenti dal maiuscolo, e li consuma chi legge l'input. */
+    switch (code) {
+        case 0x52: c = (char)USB_KEY_UP;    break;
+        case 0x51: c = (char)USB_KEY_DOWN;  break;
+        case 0x50: c = (char)USB_KEY_LEFT;  break;
+        case 0x4F: c = (char)USB_KEY_RIGHT; break;
+        default:
+            c = (g_shift_latched ? keymap_shift : keymap)[code];
+            break;
+    }
+
     if (!c) return;
     queue_push((uint8_t)c);
     g_chars++;
@@ -223,34 +244,31 @@ static void decode_report(const uint8_t *report) {
     g_history_count++;
 
     g_shift_latched = (report[0] & 0x22U) != 0;   /* LShift | RShift */
-    int still_held = 0;
+    g_held_count = 0;
 
     for (int i = 2; i < 8; i++) {
         uint8_t code = report[i];
         if (code == 0) continue;
-        if (g_have_previous && key_was_pressed(code)) {
-            if (code == g_repeat_key) still_held = 1;
-            continue;
-        }
+        if (g_held_count < 6) g_held[g_held_count++] = code;
+        if (g_have_previous && key_was_pressed(code)) continue;
         emit_code(code);
-        g_repeat_key = code;
         g_repeat_since = services_ticks();
         g_repeat_last = g_repeat_since;
-        still_held = 1;
+        g_repeat_armed = 1;
     }
-    if (g_repeat_key && !still_held) g_repeat_key = 0;
+    if (g_held_count == 0) g_repeat_armed = 0;
     g_reports++;
 }
 
-/* Avanza la ripetizione se un tasto e' tenuto da abbastanza tempo. */
+/* Avanza la ripetizione se i tasti sono tenuti da abbastanza tempo. */
 static void repeat_tick(void) {
-    if (!g_repeat_key) return;
+    if (!g_repeat_armed || !g_held_count) return;
     uint64_t now = services_ticks();
     uint64_t delay = HOMEOS_TIMER_FREQ_HZ / 2u;    /* mezzo secondo */
     uint64_t period = HOMEOS_TIMER_FREQ_HZ / 20u;  /* poi ogni 50 ms */
     if (now - g_repeat_since < delay) return;
     if (now - g_repeat_last < period) return;
-    emit_code(g_repeat_key);
+    for (int i = 0; i < g_held_count; i++) emit_code(g_held[i]);
     g_repeat_last = now;
 }
 
@@ -334,7 +352,8 @@ int usb_kbd_start(struct xhci *x) {
     g_q_head = g_q_tail = 0;
     g_reports = g_chars = g_failed = 0;
     g_history_count = 0;
-    g_repeat_key = 0;
+    g_held_count = 0;
+    g_repeat_armed = 0;
     g_ready = 1;
     return 1;
 }

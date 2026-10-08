@@ -9,9 +9,11 @@
 
 #include "shell.h"
 #include "../console.h"
+#include "../cursor.h"
 #include "../fbcon.h"
 #include "../os_syscalls.h"
 #include "../theme.h"
+#include "../usb/hid.h"
 #include "../usb/usb.h"
 
 #define LINE_MAX 128
@@ -35,6 +37,7 @@ extern const struct shell_command cmd_retro;
 extern const struct shell_command cmd_modern;
 extern const struct shell_command cmd_reboot;
 extern const struct shell_command cmd_fdt;
+extern const struct shell_command cmd_cursor;
 
 static const struct shell_command *const g_commands[] = {
     &cmd_help,
@@ -52,6 +55,7 @@ static const struct shell_command *const g_commands[] = {
     &cmd_modern,
     &cmd_reboot,
     &cmd_fdt,
+    &cmd_cursor,
 };
 
 #define COMMAND_COUNT ((int)(sizeof(g_commands) / sizeof(g_commands[0])))
@@ -133,6 +137,32 @@ static int str_eq(const char *a, const char *b) {
 
 static int wait_char(void);
 
+/*
+ * Le frecce muovono il puntatore hardware.
+ *
+ * La shell e' il posto giusto per questo: quando aspetta l'input non c'e'
+ * nient'altro da fare, e il puntatore serve proprio li'. Cosi' si guida il
+ * cursore prima che il mouse esista, e il mouse — quando arrivera' — guidera'
+ * lo stesso puntatore: cambia chi lo muove, non cosa si muove.
+ */
+#define CURSOR_STEP 8
+
+static void arrow_move_cursor(int key) {
+    uint16_t x = 0, y = 0;
+    int32_t new_x, new_y;
+
+    if (!cursor_is_ready() && cursor_init() != CURSOR_OK) return;
+
+    cursor_position(&x, &y);
+    new_x = (int32_t)x;
+    new_y = (int32_t)y;
+    if (key == USB_KEY_UP)         new_y -= CURSOR_STEP;
+    else if (key == USB_KEY_DOWN)  new_y += CURSOR_STEP;
+    else if (key == USB_KEY_LEFT)  new_x -= CURSOR_STEP;
+    else                           new_x += CURSOR_STEP;
+    cursor_move(new_x, new_y);
+}
+
 static const struct shell_command *find_command(const char *name) {
     for (int i = 0; i < COMMAND_COUNT; i++) {
         if (str_eq(g_commands[i]->name, name)) return g_commands[i];
@@ -144,6 +174,11 @@ static int read_line(char *buffer, int max) {
     int length = 0;
     for (;;) {
         int c = wait_char();
+        if (c == USB_KEY_UP || c == USB_KEY_DOWN ||
+            c == USB_KEY_LEFT || c == USB_KEY_RIGHT) {
+            arrow_move_cursor(c);
+            continue;
+        }
         if (c == '\r' || c == '\n') {
             shell_puts("\n");
             buffer[length] = '\0';
