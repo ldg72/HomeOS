@@ -224,20 +224,27 @@ data that matters" is information as valuable as a fix.
 
 ## 7. The uncached window covers exactly the screen at 1080p, and not one byte more
 
-The uncached alias of the framebuffer reserve is mapped for `MARSFB_BYTES`:
-1920 x 1080 x 4 = **8,294,400 bytes**. At 1080p the visible screen occupies
-exactly that, so not a single byte is left for anything that has to be read by
-a peripheral without going through the cache.
+This deserves a chapter of its own, because it is not only about the cursor: it
+applies to **any buffer a peripheral has to read by DMA**. The full analysis,
+with the numbers and the possible paths, is in
+[UNCACHED_MEMORY_MARS.md](UNCACHED_MEMORY_MARS.md).
 
-The concrete case: the DC8200's cursor plane reads its image by DMA, so that
-image must live in uncached memory — and at 1080p there is no room. The OS
-cannot work around it, because elsewhere in RAM the uncached alias does not
-exist: this is documented in the notes too, but here it becomes a request.
+In short: the only uncached memory the Core maps is the framebuffer reserve,
+`8,294,400` bytes, which is **exactly** the framebuffer at 1080p. At that
+resolution not a byte is left for anything else, and the DC8200's cursor plane
+— which needs 16 KiB for its image — is the first thing that ran into it.
 
-**Request**: a second uncached window, even a small one — 64 KiB is enough — in
-a region of RAM usable for device buffers. Alternatively, state in the contract
-that at 1080p the reserve is saturated and that DMA buffers must live
-elsewhere; but then we need to know *where*.
+**Request**: enlarge the reserve by 64 KiB, or map a second uncached window of
+a chosen size. The constraint the Core itself declares (the `_Static_assert` in
+`os/devices/jh7110_display/jh7110_hw.c`) is that the reserve stays below
+`RAM_START + 1 GB`: today it ends at `0x707E9000`, so there is room without
+moving anything else and without touching the visible framebuffer constants.
+
+**It applies to both projects**: Exec64 OS's display device uses the same
+constants (`exec64/marsfb_memory.h`), so it has the same window — and on the
+Mars it does not advertise cursor support yet
+(`os/devices/jh7110_display/jh7110_device.c`: *"no cursor support advertised
+yet"*).
 
 ---
 

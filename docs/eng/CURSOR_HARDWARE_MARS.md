@@ -123,6 +123,10 @@ has nowhere to put the image. Two ways out: ask the Core for a second uncached
 window, or fall back to a software cursor at that resolution. It has to be
 decided up front, not at runtime.
 
+The problem is not only about the cursor: it applies to any DMA buffer, and it
+is analysed in full in [UNCACHED_MEMORY_MARS.md](UNCACHED_MEMORY_MARS.md),
+together with the possible paths and what each project needs.
+
 ### 5.2 Watch out for resolution changes
 
 The image sits **straight after** the visible screen: if the resolution changes

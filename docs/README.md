@@ -18,6 +18,7 @@ writing an OS on the Milk-V Mars (StarFive JH7110).
 | GPIO — mappa dei registri, connettore a 40 pin, self-test | [ita/GPIO_MARS.md](ita/GPIO_MARS.md) | [eng/GPIO_MARS.md](eng/GPIO_MARS.md) |
 | Porte USB — due controller: Cadence sul SoC, USB 3.0 dietro PCIe | [ita/USB_PORTS_MARS.md](ita/USB_PORTS_MARS.md) | [eng/USB_PORTS_MARS.md](eng/USB_PORTS_MARS.md) |
 | Cursore hardware — registri del DC8200, sequenza e due trappole | [ita/CURSOR_HARDWARE_MARS.md](ita/CURSOR_HARDWARE_MARS.md) | [eng/CURSOR_HARDWARE_MARS.md](eng/CURSOR_HARDWARE_MARS.md) |
+| Memoria non cachata — il muro degli 8 MB a 1080p, e le strade per risolverlo | [ita/UNCACHED_MEMORY_MARS.md](ita/UNCACHED_MEMORY_MARS.md) | [eng/UNCACHED_MEMORY_MARS.md](eng/UNCACHED_MEMORY_MARS.md) |
 | Limiti del Core emersi da un OS estraneo | [ita/CORE_NOTES_FROM_HOMEOS.md](ita/CORE_NOTES_FROM_HOMEOS.md) | [eng/CORE_NOTES_FROM_HOMEOS.md](eng/CORE_NOTES_FROM_HOMEOS.md) |
 | Lacune del Core e richieste per chi sviluppa il kernel (storage) | [ita/CORE_REQUESTS.md](ita/CORE_REQUESTS.md) | [eng/CORE_REQUESTS.md](eng/CORE_REQUESTS.md) |
 

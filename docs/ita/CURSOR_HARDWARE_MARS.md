@@ -124,6 +124,10 @@ hardware non ha dove mettere l'immagine. Due strade: chiedere al Core una
 seconda finestra non cachata, oppure a quella risoluzione ripiegare sul
 cursore software. Va deciso prima, non a runtime.
 
+Il problema non riguarda solo il cursore: vale per qualunque buffer DMA, ed e'
+analizzato per esteso in [UNCACHED_MEMORY_MARS.md](UNCACHED_MEMORY_MARS.md),
+insieme alle strade possibili e a cosa serve ai due progetti.
+
 ### 5.2 Attenzione al cambio di risoluzione
 
 L'immagine sta **subito dopo** lo schermo visibile: se la risoluzione cambia e

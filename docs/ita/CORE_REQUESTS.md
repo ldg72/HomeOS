@@ -227,21 +227,28 @@ usare per dati che contano" è un'informazione preziosa quanto una correzione.
 
 ## 7. La finestra non cachata copre esattamente lo schermo a 1080p, e non un byte di piu'
 
-L'alias non cachato della riserva framebuffer e' mappato per `MARSFB_BYTES`:
-1920 x 1080 x 4 = **8.294.400 byte**. A 1080p lo schermo visibile occupa
-esattamente quella misura, quindi non resta un byte per qualunque cosa debba
-essere letta da una periferica senza passare dalla cache.
+Questo merita un capitolo a parte, perche' non riguarda solo il cursore: vale
+per **qualunque buffer che una periferica debba leggere via DMA**.
+L'analisi completa, con i numeri e le strade possibili, e' in
+[UNCACHED_MEMORY_MARS.md](UNCACHED_MEMORY_MARS.md).
 
-Il caso concreto: il piano cursore del DC8200 legge la propria immagine via
-DMA, quindi quell'immagine deve stare in memoria non cachata — e a 1080p non
-c'e' posto. L'OS non puo' rimediare, perche' nel resto della RAM l'alias non
-cachato non esiste: e' documentato anche nelle note, ma e' qui che diventa una
-richiesta.
+In breve: l'unica memoria non cachata che il Core mappa e' la riserva
+framebuffer, `8.294.400` byte, che e' **esattamente** il framebuffer a 1080p. A
+quella risoluzione non resta un byte per nient'altro, e il piano cursore del
+DC8200 — che ha bisogno di 16 KiB per la sua immagine — e' il primo caso che ci
+ha sbattuto contro.
 
-**Richiesta**: una seconda finestra non cachata, anche piccola — 64 KiB
-bastano — in una zona di RAM utilizzabile per i buffer dei dispositivi.
-In alternativa, va dichiarato nel contratto che a 1080p la riserva e' satura e
-che i buffer DMA vanno tenuti altrove; ma allora serve sapere *dove*.
+**Richiesta**: allargare la riserva di 64 KiB, oppure mappare una seconda
+finestra non cachata di dimensioni scelte. Il vincolo dichiarato dal Core stesso
+(`_Static_assert` in `os/devices/jh7110_display/jh7110_hw.c`) e' che la riserva
+resti sotto `RAM_START + 1 GB`: oggi finisce a `0x707E9000`, quindi c'e' spazio
+senza spostare nient'altro e senza toccare le costanti del framebuffer visibile.
+
+**Vale per entrambi i progetti**: il device display di Exec64 OS usa le stesse
+costanti (`exec64/marsfb_memory.h`), quindi ha la stessa finestra — e sulla
+Mars non dichiara ancora il supporto al cursore
+(`os/devices/jh7110_display/jh7110_device.c`: *"no cursor support advertised
+yet"*).
 
 ---
 
