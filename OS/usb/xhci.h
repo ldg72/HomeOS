@@ -49,7 +49,16 @@
 #define TRB_CHAIN       (1U << 4)
 #define TRB_DIR_IN      (1U << 16)
 
-#define COMPLETION_SUCCESS 1U
+/*
+ * Codici di completamento di un transfer event.
+ *
+ * "Short packet" arriva quando il dispositivo manda meno byte di quanti ne
+ * erano stati richiesti — ed e' un esito **buono**: i byte che sono arrivati
+ * sono validi. Trattarlo come errore significava buttare via ogni report di
+ * un mouse, che ne manda quattro su un endpoint che ne accetta sette.
+ */
+#define COMPLETION_SUCCESS      1U
+#define COMPLETION_SHORT_PACKET 13U
 
 #define XHCI_RING_TRBS 256U
 

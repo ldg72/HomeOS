@@ -66,12 +66,22 @@ void homeos_boot(void) {
 
         /* La tastiera USB si tenta subito; se non risponde si resta sulla
          * seriale, che e' sempre disponibile. */
-        os_puts("[HomeOS] USB keyboard: starting\n");
-        if (usb_keyboard_start()) {
-            os_puts("[HomeOS] USB keyboard active\n");
-        } else {
-            os_puts("[HomeOS] USB keyboard not available, continuing on serial\n");
-        }
+        os_puts("[HomeOS] USB input: starting\n");
+        (void)usb_input_start();
+
+        /*
+         * L'esito si stampa anche sullo schermo, non solo in seriale.
+         * Con un mouse collegato la tastiera non c'e' — una porta sola — e
+         * senza seriale non ci sarebbe modo di sapere cosa e' stato trovato:
+         * un test si fa o non si fa a seconda di un cavo. Questa riga e' li'
+         * per quello.
+         */
+        os_puts("[HomeOS] USB input: ");
+        os_puts(usb_input_kind_name());
+        os_puts("\n");
+        fbcon_puts("[usb] input: ");
+        fbcon_puts(usb_input_kind_name());
+        fbcon_puts("\n");
 
         shell_run();   /* non ritorna: il prompt resta attivo */
         return;

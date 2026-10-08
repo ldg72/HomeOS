@@ -1,14 +1,19 @@
 /*
- * HomeOS — tastiera USB HID boot su xHCI.
+ * HomeOS — input USB HID boot su xHCI: tastiera e mouse.
  *
  * Enumerazione minima: descrittori device e config, SET_CONFIGURATION,
- * protocollo boot, un interrupt IN su EP1 e decodifica del report da 8 byte.
- * Nessuna keymap internazionale: solo la disposizione US, che basta alla shell.
+ * protocollo boot, un endpoint interrupt IN, e decodifica del report. La
+ * tastiera manda 8 byte e produce caratteri; il mouse ne manda 3 o 4, con
+ * spostamenti relativi, e muove il puntatore.
+ *
+ * Protocollo boot vuol dire che non si legge il report descriptor: il formato
+ * e' quello fissato dallo standard, che e' esattamente quello che serve.
  */
 
 #include <stddef.h>
 
 #include "../console.h"
+#include "../cursor.h"
 #include "../mmio.h"
 #include "../services.h"
 #include "hid.h"
@@ -29,9 +34,14 @@
 #define HID_CLASS     0x03U
 #define HID_SUBCLASS_BOOT 0x01U
 #define HID_PROTO_KEYBOARD 0x01U
+#define HID_PROTO_MOUSE    0x02U
 
 #define EP_TYPE_INTERRUPT_IN 7U
-#define EP1_IN_DCI 3U          /* EP1 IN: 2 * 1 + 1 */
+
+/* Dal descrittore dell'endpoint: DCI = 2 * numero + direzione (1 = IN). */
+static uint8_t g_endpoint_dci = 3U;
+static uint8_t g_protocol = HID_PROTO_KEYBOARD;
+static uint8_t g_buttons;
 
 /*
  * Il campo Interval dell'endpoint context non e' il bInterval del descrittore:
@@ -108,6 +118,31 @@ static uint16_t rd16(const uint8_t *p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }
 
+/* Un byte in esadecimale, due cifre: serve a stampare i descrittori. */
+static void put_byte(uint8_t value) {
+    static const char digits[] = "0123456789ABCDEF";
+    char text[3];
+    text[0] = digits[value >> 4];
+    text[1] = digits[value & 0x0FU];
+    text[2] = '\0';
+    os_puts(text);
+}
+
+/*
+ * La dimensione massima del pacchetto di un endpoint interrupt dev'essere una
+ * potenza di due. Alcuni dispositivi economici ne dichiarano una che non lo
+ * e' — nel nostro caso un mouse dichiara 7 — e va riportata a un valore
+ * sensato invece di passarla al controller: il kernel Linux fa lo stesso.
+ */
+static uint8_t sane_max_packet(uint16_t raw) {
+    uint8_t value = (uint8_t)(raw & 0x07FFU);   /* bit 11-12 = transazioni */
+
+    if (value == 0U) return 8U;
+    if (value > 64U) value = 64U;
+    while ((value & (uint8_t)(value - 1U)) != 0U) value--;
+    return value;
+}
+
 static int get_descriptor(struct xhci *x, uint8_t type, uint8_t index,
                           uint16_t length, void *buffer) {
     uint8_t setup[8];
@@ -116,11 +151,25 @@ static int get_descriptor(struct xhci *x, uint8_t type, uint8_t index,
     return xhci_control(x, setup, buffer, length, 1);
 }
 
-/* Percorre il blob dei descrittori e prende interfaccia boot e endpoint IN. */
+/*
+ * Percorre il blob dei descrittori e prende l'interfaccia HID boot (tastiera o
+ * mouse) con il suo endpoint interrupt IN.
+ *
+ * Se le interfacce sono due — capita con i ricevitori wireless, che sono
+ * tastiera e mouse insieme — si sceglie la tastiera. Cosi' chi ha un
+ * ricevitore continua ad avere la tastiera, e il mouse si prende quando e'
+ * attaccato da solo.
+ */
 static int parse_configuration(struct xhci *x, const uint8_t *blob, uint16_t total) {
+    struct found {
+        int present;
+        uint8_t dci, max_packet, interval;
+    };
+    struct found keyboard = { 0, 3U, 8U, 10U };
+    struct found mouse = { 0, 3U, 8U, 10U };
     uint32_t offset = 0;
-    int in_boot_interface = 0;
-    int found_interface = 0, found_endpoint = 0;
+    int in_interface = 0;
+    uint8_t protocol = 0;
 
     while (offset + 2U <= total) {
         uint8_t length = blob[offset];
@@ -131,29 +180,54 @@ static int parse_configuration(struct xhci *x, const uint8_t *blob, uint16_t tot
             uint8_t cls = blob[offset + 5U];
             uint8_t sub = blob[offset + 6U];
             uint8_t proto = blob[offset + 7U];
-            in_boot_interface = (cls == HID_CLASS && sub == HID_SUBCLASS_BOOT &&
-                                 proto == HID_PROTO_KEYBOARD);
-            if (in_boot_interface) found_interface = 1;
-        } else if (type == DT_ENDPOINT && length >= 7U && in_boot_interface) {
+
+            /*
+             * Ogni interfaccia HID si stampa. Serve a capire cosa c'e' davvero
+             * sulla porta quando un dispositivo non viene riconosciuto: molti
+             * mouse dichiarano sottoclasse 0 e protocollo 0 invece di
+             * "boot mouse", e senza questa riga si vedrebbe solo "non trovato".
+             */
+            if (cls == HID_CLASS) {
+                os_puts("[usb] HID: interface sub=");
+                os_puthex64(sub);
+                os_puts(" proto=");
+                os_puthex64(proto);
+                os_puts("\n");
+            }
+
+            in_interface = (cls == HID_CLASS && sub == HID_SUBCLASS_BOOT &&
+                            (proto == HID_PROTO_KEYBOARD || proto == HID_PROTO_MOUSE));
+            protocol = in_interface ? proto : 0U;
+        } else if (type == DT_ENDPOINT && length >= 7U && in_interface) {
             uint8_t address = blob[offset + 2U];
             uint8_t attributes = blob[offset + 3U];
             if ((address & 0x80U) && (attributes & 0x03U) == 0x03U) {
-                g_endpoint_max_packet = (uint8_t)rd16(&blob[offset + 4U]);
-                g_endpoint_interval = blob[offset + 6U];
-                found_endpoint = 1;
+                struct found *found =
+                    (protocol == HID_PROTO_MOUSE) ? &mouse : &keyboard;
+                found->present = 1;
+                found->dci = (uint8_t)(((address & 0x0FU) * 2U) + 1U);
+                found->max_packet = sane_max_packet(rd16(&blob[offset + 4U]));
+                found->interval = blob[offset + 6U];
             }
         }
         offset += length;
     }
 
-    if (!found_interface) {
-        os_puts("[usb] HID: boot keyboard interface not found\n");
+    if (keyboard.present) {
+        g_protocol = HID_PROTO_KEYBOARD;
+        g_endpoint_dci = keyboard.dci;
+        g_endpoint_max_packet = keyboard.max_packet;
+        g_endpoint_interval = keyboard.interval;
+    } else if (mouse.present) {
+        g_protocol = HID_PROTO_MOUSE;
+        g_endpoint_dci = mouse.dci;
+        g_endpoint_max_packet = mouse.max_packet;
+        g_endpoint_interval = mouse.interval;
+    } else {
+        os_puts("[usb] HID: no boot keyboard or mouse interface found\n");
         return 0;
     }
-    if (!found_endpoint) {
-        os_puts("[usb] HID: interrupt IN endpoint not found\n");
-        return 0;
-    }
+
     (void)x;
     return 1;
 }
@@ -260,6 +334,33 @@ static void decode_report(const uint8_t *report) {
     g_reports++;
 }
 
+/*
+ * Report di un mouse in protocollo boot: byte 0 i pulsanti, byte 1 e 2 gli
+ * spostamenti X e Y, entrambi con segno. Il movimento e' **relativo**, quindi
+ * si somma alla posizione corrente invece di sostituirla.
+ *
+ * Nota sulla verticale: in HID il valore positivo va verso il basso, quindi si
+ * somma. Se sulla scheda il puntatore salisse quando il mouse scende, e' qui
+ * che si cambia segno — una riga.
+ */
+static void decode_mouse_report(const uint8_t *report) {
+    const int8_t dx = (int8_t)report[1];
+    const int8_t dy = (int8_t)report[2];
+    uint16_t x = 0, y = 0;
+
+    g_buttons = report[0];
+    g_reports++;
+
+    if (dx == 0 && dy == 0) return;
+
+    /* Il puntatore compare al primo movimento: usare il mouse e' usare la
+     * grafica. */
+    if (!cursor_is_ready() && cursor_init() != CURSOR_OK) return;
+
+    cursor_position(&x, &y);
+    cursor_move((int32_t)x + (int32_t)dx, (int32_t)y + (int32_t)dy);
+}
+
 /* Avanza la ripetizione se i tasti sono tenuti da abbastanza tempo. */
 static void repeat_tick(void) {
     if (!g_repeat_armed || !g_held_count) return;
@@ -272,15 +373,15 @@ static void repeat_tick(void) {
     g_repeat_last = now;
 }
 
-void usb_kbd_stats(uint32_t *reports, uint32_t *chars, uint32_t *failed) {
+void usb_hid_stats(uint32_t *reports, uint32_t *chars, uint32_t *failed) {
     if (reports) *reports = g_reports;
     if (chars) *chars = g_chars;
     if (failed) *failed = g_failed;
 }
 
-uint32_t usb_kbd_history_count(void) { return g_history_count; }
+uint32_t usb_hid_history_count(void) { return g_history_count; }
 
-const uint8_t *usb_kbd_history_at(uint32_t index) {
+const uint8_t *usb_hid_history_at(uint32_t index) {
     if (index >= USB_KBD_HISTORY) return 0;
     if (g_history_count < USB_KBD_HISTORY) {
         return (index < g_history_count) ? g_history[index] : 0;
@@ -290,7 +391,7 @@ const uint8_t *usb_kbd_history_at(uint32_t index) {
     return g_history[(start + index) % USB_KBD_HISTORY];
 }
 
-int usb_kbd_start(struct xhci *x) {
+int usb_hid_start(struct xhci *x) {
     uint8_t setup[8];
     uint8_t *buffer = xhci_data_buffer(x);
 
@@ -320,6 +421,21 @@ int usb_kbd_start(struct xhci *x) {
         os_puts("[usb] HID: GET_DESCRIPTOR config failed\n");
         return 0;
     }
+
+    /*
+     * Se il dispositivo non funziona, senza i byte del descrittore si puo'
+     * solo tirare a indovinare: le interfacce, i protocolli e le dimensioni
+     * dei pacchetti sono li' dentro. Sono poche decine di byte.
+     */
+    if (total <= 64U) {
+        os_puts("[usb] HID: config");
+        for (uint32_t i = 0; i < total; i++) {
+            os_puts(" ");
+            put_byte(buffer[i]);
+        }
+        os_puts("\n");
+    }
+
     if (!parse_configuration(x, buffer, total)) return 0;
 
     setup_packet(setup, 0x00U, REQ_SET_CONFIGURATION, 1, 0, 0);
@@ -337,7 +453,7 @@ int usb_kbd_start(struct xhci *x) {
     setup_packet(setup, 0x21U, HID_SET_IDLE, 0, 0, 0);
     (void)xhci_control(x, setup, NULL, 0, 0);   /* non bloccante se fallisce */
 
-    if (!xhci_configure_endpoint(x, EP1_IN_DCI, EP_TYPE_INTERRUPT_IN,
+    if (!xhci_configure_endpoint(x, g_endpoint_dci, EP_TYPE_INTERRUPT_IN,
                                  g_endpoint_max_packet,
                                  interval_field(g_endpoint_interval),
                                  x->ep1_ring)) {
@@ -345,6 +461,10 @@ int usb_kbd_start(struct xhci *x) {
     }
     os_puts("[usb] HID: interrupt endpoint configured, MPS=");
     os_putu32(g_endpoint_max_packet);
+    os_puts(" DCI=");
+    os_putu32(g_endpoint_dci);
+    os_puts(" interval=");
+    os_puthex64(interval_field(g_endpoint_interval));
     os_puts("\n");
 
     g_have_previous = 0;
@@ -358,13 +478,37 @@ int usb_kbd_start(struct xhci *x) {
     return 1;
 }
 
-int usb_kbd_ready(void) { return g_ready; }
+int usb_hid_ready(void) { return g_ready; }
+
+int usb_hid_kind(void) {
+    if (!g_ready) return USB_HID_KIND_NONE;
+    return (g_protocol == HID_PROTO_MOUSE) ? USB_HID_KIND_MOUSE
+                                           : USB_HID_KIND_KEYBOARD;
+}
+
+uint8_t usb_mouse_buttons(void) { return g_buttons; }
+
+/*
+ * Lunghezza della richiesta: quanti byte manda il dispositivo in un report.
+ *
+ * Non e' un dettaglio: un trasferimento interrupt termina quando arriva un
+ * pacchetto **piu' corto** della dimensione massima dell'endpoint. Se chiedi
+ * otto byte a un mouse che ne manda quattro per volta e il cui massimo e'
+ * quattro, non arriva mai un pacchetto corto, il controller continua a
+ * chiedere, e nella stessa lettura finiscono due movimenti. La tastiera ne
+ * manda otto e il suo massimo e' otto: li' chiedere otto e' corretto, e infatti
+ * ha sempre funzionato.
+ */
+static uint32_t report_length(void) {
+    if (g_endpoint_max_packet == 0U || g_endpoint_max_packet > 8U) return 8U;
+    return g_endpoint_max_packet;
+}
 
 /* Accoda un trasferimento per lo slot indicato, ricordando dove e' finito. */
 static void submit_slot(struct xhci *x, uint32_t slot) {
-    int index = xhci_submit_in(x, EP1_IN_DCI, x->ep1_ring, &x->ep1_enq,
+    int index = xhci_submit_in(x, g_endpoint_dci, x->ep1_ring, &x->ep1_enq,
                                &x->ep1_cycle, xhci_report_slot(x, slot),
-                               sizeof(g_previous));
+                               report_length());
     if (index >= 0) g_trb_slot[index] = (uint8_t)slot;
 }
 
@@ -383,7 +527,7 @@ static uint32_t trb_index(const struct xhci_trb *event) {
  * tastiera puo' produrre un report che nessuno raccoglie: digitando veloce,
  * oppure mentre l'OS stampa molto testo, qualche tasto andava perso.
  */
-int usb_kbd_try_getchar(struct xhci *x) {
+int usb_hid_poll(struct xhci *x) {
     if (!g_ready) return -1;
     g_ring_base = x->ep1_ring;
 
@@ -400,12 +544,38 @@ int usb_kbd_try_getchar(struct xhci *x) {
         if (trb >= XHCI_RING_TRBS) continue;
         uint32_t slot = g_trb_slot[trb];
         uint8_t *report = xhci_report_slot(x, slot);
+        const uint32_t code = xhci_event_code(&event);
+        const uint32_t requested = report_length();
+        const uint32_t residual = event.status & 0x00FFFFFFU;
+        const uint32_t received =
+            (residual <= requested) ? (requested - residual) : 0U;
 
-        if (xhci_event_code(&event) == COMPLETION_SUCCESS) {
-            decode_report(report);
-            for (int i = 0; i < 8; i++) g_previous[i] = report[i];
-            g_have_previous = 1;
+        if (code == COMPLETION_SUCCESS || code == COMPLETION_SHORT_PACKET) {
+            /* I primi report si stampano: se un dispositivo consegna qualcosa
+             * di strano, si vede qui invece di doverlo dedurre. */
+            if (g_reports < 2U) {
+                os_puts("[usb] HID: report code=");
+                os_putu32(code);
+                os_puts(" received=");
+                os_putu32(received);
+                os_puts("\n");
+            }
+            if (g_protocol == HID_PROTO_MOUSE) {
+                /* Servono almeno tre byte: pulsanti e due spostamenti. */
+                if (received >= 3U) decode_mouse_report(report);
+            } else if (received >= 8U) {
+                decode_report(report);
+                for (int i = 0; i < 8; i++) g_previous[i] = report[i];
+                g_have_previous = 1;
+            }
         } else {
+            /* Anche i codici di errore si stampano, i primi: senza sapere
+             * *quale* errore, l'unica strada sarebbe indovinare. */
+            if (g_failed < 4U) {
+                os_puts("[usb] HID: transfer failed code=");
+                os_putu32(code);
+                os_puts("\n");
+            }
             g_failed++;
         }
         submit_slot(x, slot);

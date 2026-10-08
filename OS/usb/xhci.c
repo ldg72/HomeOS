@@ -262,6 +262,8 @@ int xhci_address_device(struct xhci *x, uint32_t slot_id, uint32_t port, uint32_
     uint32_t *ep0 = x->input_ctx + 16;     /* EP0 Context           */
     uint32_t *out = x->device_ctx;
     struct xhci_trb evt;
+    /* Nel campo "Port Speed" di PORTSC: 1 = full, 2 = low, 3 = high. */
+    const uint32_t control_mps = (speed == 3U) ? 64U : 8U;
 
     /* I contesti endpoint sono 32 byte ciascuno: va azzerata tutta la pagina,
      * altrimenti i campi non scritti restano sporchi dal comando precedente. */
@@ -279,11 +281,16 @@ int xhci_address_device(struct xhci *x, uint32_t slot_id, uint32_t port, uint32_
     slot[3] = 0;                            /* indirizzo 0 finche' non assegnato */
 
     /*
-     * EP0: CErr=3 (obbligatorio per gli endpoint di controllo), tipo
-     * Control Bidirectional, Max Packet Size 8 per un low-speed.
+     * EP0: CErr=3 (obbligatorio per gli endpoint di controllo), tipo Control
+     * Bidirectional, e la dimensione massima del pacchetto di controllo.
+     *
+     * Quest'ultima dipende dalla velocita': 8 byte per low e full speed, 64 per
+     * high speed. La tastiera era low speed, quindi il valore fisso a 8 non
+     * aveva mai dato problemi — ma un mouse high speed con 8 byte non si
+     * indirizza, perche' il dispositivo si aspetta pacchetti da 64.
      * Senza CErr il controller risponde TRB Error.
      */
-    ep0[1] = (3U << 1) | (4U << 3) | (8U << 16);
+    ep0[1] = (3U << 1) | (4U << 3) | (control_mps << 16);
     /* TR Dequeue Pointer: campo nei bit 4..63, bit 0 = DCS (deve valere 1). */
     uint64_t ring_addr = dmacast(x->ep0_ring);
     ep0[2] = (uint32_t)((ring_addr & ~0xfULL) | 1U);

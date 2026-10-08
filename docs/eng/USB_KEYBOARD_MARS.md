@@ -1,14 +1,18 @@
-# USB Keyboard on Milk-V Mars (StarFive JH7110) — bring-up notes
+# USB input on Milk-V Mars — keyboard and mouse (bring-up notes)
 
-**Status**: full chain working on real hardware.
-**Date**: 2026-10-06.
+**Status**: full chain working on real hardware, keyboard and mouse.
+**Date**: 2026-10-06, updated 2026-10-08 with the mouse.
 **Scope**: bare-metal OS running directly on the hardware, with no
 U-Boot/Linux underneath. Written to be reusable by any OS.
 
 This document describes what it takes to get from "board powered on" to
-"keystrokes reach the OS", with the values measured on the board and the traps
-actually hit along the way. It is not a translation of existing documentation:
-it is what we had to discover to make it work.
+"keystrokes and mouse movements reach the OS", with the values measured on the
+board and the traps actually hit along the way. It is not a translation of
+existing documentation: it is what we had to discover to make it work.
+
+The file name is the one from the first bring-up, which was keyboard only.
+Chapters 1-5 apply to both devices: only the interface to look for changes.
+The keyboard traps are in chapter 6, the mouse ones in chapter 11.
 
 ---
 
@@ -358,3 +362,82 @@ Transfer Event ............. type 32
 
 The register values in this document are **measured on the board**, not
 inferred: where an external reference and the board disagree, the board wins.
+
+---
+
+## 11. The mouse: same chain, three more traps
+
+**Status**: working and verified on real hardware (2026-10-08).
+
+The mouse required no change to the electrical part, to xHCI or to
+enumeration: **the chain of chapters 1-5 is the same**. What changes is the
+interface to look for, the report format, and three details you never meet
+with a keyboard alone.
+
+### 11.1 Which interface
+
+The boot keyboard declares class 3, subclass 1, **protocol 1**. The boot mouse
+is the same class and subclass with **protocol 2**. The rest of the path —
+`SET_CONFIGURATION`, `SET_PROTOCOL(0)`, interrupt IN endpoint, doorbell — is
+identical.
+
+If a device exposes **two** interfaces — which happens with wireless
+receivers, keyboard and mouse together — prefer the **keyboard**: that is the
+one needed for typing, and the mouse is picked up when it is attached alone,
+with only one port available.
+
+### 11.2 The report
+
+The boot mouse sends **three** bytes (some send four, with the wheel):
+
+| byte | content |
+|---|---|
+| 0 | buttons (bit 0 = left) |
+| 1 | X displacement, **signed** |
+| 2 | Y displacement, **signed** |
+
+Displacements are **relative**: they add to the current position, they do not
+replace it. And in HID positive goes downwards, so Y adds directly.
+
+### 11.3 Trap: the short packet
+
+**It is the defect that kept us stuck for an evening.** A transfer event can
+complete in two ways: *Success* or ***Short Packet*** (code 13), meaning "the
+device sent fewer bytes than were requested". In **both cases the bytes that
+arrived are valid**.
+
+The keyboard sends 8 bytes on an endpoint that accepts 8: a short packet never
+happens, and treating code 13 as an error goes unnoticed. The mouse sends 4
+bytes on an endpoint that declares 7: **every report is a short packet**, and
+classifying it as an error throws away every mouse movement — silently, with
+the only trace being a rising error counter.
+
+Hence the rule: **both codes are a good outcome**, and the residual length in
+the transfer event says how many bytes really arrived.
+
+### 11.4 Trap: the EP0 size depends on speed
+
+The EP0 context must be programmed with the maximum control packet size, which
+**depends on the device speed**: 8 bytes for low and full speed, **64 for high
+speed**. A fixed value of 8 is fine as long as you only try a low-speed
+keyboard; a high-speed mouse, with 8, cannot even be addressed.
+
+### 11.5 Trap: a declared size out of spec
+
+The maximum size of an interrupt endpoint must be a **power of two**. Our
+mouse declares **7**. The value must be brought back to something sane (4, by
+rounding down) instead of being handed to the controller: the Linux kernel
+does the same, and now it is clear why.
+
+### 11.6 The diagnostics that solved it
+
+Three printouts, added after losing an evening guessing, worth more than any
+reasoning:
+
+- **the configuration descriptor in hex**, when it is small: the interfaces,
+  protocols and packet sizes are in there, and without the real bytes you
+  interpret instead of reading;
+- **code and bytes received** for the first reports: it separates "they do not
+  arrive" from "they arrive mangled";
+- **the error code** of the first failed transfers: that is what told us code
+  13 was not an error but an outcome.

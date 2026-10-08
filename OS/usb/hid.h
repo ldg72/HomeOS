@@ -4,9 +4,25 @@
 #include "xhci.h"
 #include "usb.h"
 
-int usb_kbd_start(struct xhci *x);
-int usb_kbd_ready(void);
-int usb_kbd_try_getchar(struct xhci *x);
+/*
+ * Il dispositivo trovato all'avvio. Con un ricevitore wireless, che e' tastiera
+ * e mouse insieme, si sceglie la tastiera: il mouse si prende quando e' da solo.
+ */
+#define USB_HID_KIND_NONE     0
+#define USB_HID_KIND_KEYBOARD 1
+#define USB_HID_KIND_MOUSE    2
+
+int usb_hid_start(struct xhci *x);
+int usb_hid_ready(void);
+int usb_hid_kind(void);
+
+/* Restituisce il prossimo carattere digitato, oppure -1. Il mouse non produce
+ * caratteri: quando arriva un suo report, questa funzione muove il puntatore e
+ * restituisce -1. */
+int usb_hid_poll(struct xhci *x);
+
+/* Stato dei pulsanti del mouse (bit 0 = sinistro), per il clic. */
+uint8_t usb_mouse_buttons(void);
 
 /*
  * Tasti che non producono un carattere. Il valore sta fuori dall'ASCII, cosi'
@@ -20,10 +36,10 @@ int usb_kbd_try_getchar(struct xhci *x);
 
 /* Contatori: report ricevuti, caratteri emessi, trasferimenti falliti.
  * Servono a capire dove si perdono i tasti. */
-void usb_kbd_stats(uint32_t *reports, uint32_t *chars, uint32_t *failed);
+void usb_hid_stats(uint32_t *reports, uint32_t *chars, uint32_t *failed);
 
 /* Cronologia degli ultimi report ricevuti, per diagnosi. */
-uint32_t usb_kbd_history_count(void);
-const uint8_t *usb_kbd_history_at(uint32_t index);   /* 8 byte */
+uint32_t usb_hid_history_count(void);
+const uint8_t *usb_hid_history_at(uint32_t index);   /* 8 byte */
 
 #endif

@@ -46,7 +46,7 @@ HomeOS/
 ├── docs/                          documentazione scritta da noi
 │   ├── ita/                       italiano
 │   ├── eng/                       English
-│   ├── USB_KEYBOARD_MARS.md       bring-up tastiera USB: valori e trappole
+│   ├── USB_KEYBOARD_MARS.md       bring-up input USB (tastiera e mouse)
 │   └── CORE_NOTES_FROM_HOMEOS.md  limiti del Core emersi da un altro OS
 └── tools/
     ├── mkbundle.py                bundler: Init.elf -> HomeOS.img

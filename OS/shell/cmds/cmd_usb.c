@@ -2,20 +2,24 @@
 #include "../shell.h"
 #include "../../usb/usb.h"
 
-SHELL_COMMAND(cmd_usb, "usb", "USB keyboard: status | init") {
+SHELL_COMMAND(cmd_usb, "usb", "USB input: status | init") {
     if (argc >= 2 && argv[1][0] == 'i') {
-        shell_puts("starting USB keyboard...\n");
-        int rc = usb_keyboard_start();
-        shell_puts(rc ? "USB keyboard ready\n" : "startup not completed\n");
+        shell_puts("starting USB input...\n");
+        int rc = usb_input_start();
+        shell_puts(rc ? "USB input ready\n" : "startup not completed\n");
         return;
     }
 
-    shell_puts("USB keyboard: ");
-    shell_puts(usb_keyboard_ready() ? "ready" : "not ready");
+    shell_puts("USB input: ");
+    switch (usb_input_kind()) {
+        case USB_INPUT_KEYBOARD: shell_puts("keyboard, ready"); break;
+        case USB_INPUT_MOUSE:    shell_puts("mouse, ready");    break;
+        default:                 shell_puts("not ready");       break;
+    }
     shell_puts("\n");
 
     uint32_t reports = 0, chars = 0, failed = 0;
-    usb_keyboard_stats(&reports, &chars, &failed);
+    usb_input_stats(&reports, &chars, &failed);
     shell_puts("  reports received : ");
     shell_putu32(reports);
     shell_puts("\n  keys emitted     : ");
@@ -29,7 +33,7 @@ SHELL_COMMAND(cmd_usb, "usb", "USB keyboard: status | init") {
     if (argc >= 2) {
         shell_puts("last reports (modifiers, reserved, 6 keycodes):\n");
         for (uint32_t i = 0; i < USB_KBD_HISTORY; i++) {
-            const uint8_t *report = usb_keyboard_history_at(i);
+            const uint8_t *report = usb_input_history_at(i);
             if (!report) break;
             shell_puts("  ");
             for (int k = 0; k < 8; k++) {

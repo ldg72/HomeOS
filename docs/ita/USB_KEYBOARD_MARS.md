@@ -1,14 +1,19 @@
-# Tastiera USB su Milk-V Mars (StarFive JH7110) — note di bring-up
+# Input USB su Milk-V Mars — tastiera e mouse (note di bring-up)
 
-**Stato**: catena completa funzionante su hardware reale.
-**Data**: 2026-10-06.
+**Stato**: catena completa funzionante su hardware reale, tastiera e mouse.
+**Data**: 2026-10-06, aggiornato il 2026-10-08 con il mouse.
 **Ambito**: OS bare-metal che gira direttamente sull'hardware, senza
 U-Boot/Linux sotto. Scritto per essere riusabile da qualunque OS.
 
 Questo documento descrive cosa serve per arrivare da "scheda accesa" a
-"i tasti arrivano all'OS", con i valori misurati sulla scheda e gli inciampi
-reali. Non è una traduzione di documentazione: è quello che abbiamo dovuto
-scoprire per farlo funzionare.
+"i tasti e i movimenti del mouse arrivano all'OS", con i valori misurati sulla
+scheda e gli inciampi reali. Non è una traduzione di documentazione: è quello
+che abbiamo dovuto scoprire per farlo funzionare.
+
+Il nome del file è rimasto quello del primo bring-up, che era solo la tastiera.
+I capitoli 1-5 valgono per entrambi i dispositivi: cambia solo l'interfaccia da
+cercare. Le trappole della tastiera sono nel capitolo 6, quelle del mouse nel
+capitolo 11.
 
 ---
 
@@ -364,3 +369,84 @@ Transfer Event ............. tipo 32
 I valori di registro di questo documento sono **misurati sulla scheda**, non
 dedotti: dove un riferimento esterno e la scheda divergono, ha ragione la
 scheda.
+
+---
+
+## 11. Il mouse: stessa catena, tre trappole in piu'
+
+**Stato**: funzionante e verificato su hardware reale (2026-10-08).
+
+Il mouse non ha richiesto nessuna modifica alla parte elettrica, all'xHCI o
+all'enumerazione: **la catena dei capitoli 1-5 è la stessa**. Cambia
+un'interfaccia da cercare, un formato di report e tre dettagli che con la
+tastiera sola non si incontrano mai.
+
+### 11.1 Quale interfaccia
+
+La tastiera boot si dichiara classe 3, sottoclasse 1, **protocollo 1**. Il
+mouse boot è la stessa classe e sottoclasse con **protocollo 2**. Il resto del
+percorso — `SET_CONFIGURATION`, `SET_PROTOCOL(0)`, endpoint interrupt IN,
+doorbell — è identico.
+
+Se un dispositivo espone **due** interfacce — capita con i ricevitori
+wireless, che sono tastiera e mouse insieme — conviene scegliere la
+**tastiera**: è quella che serve per digitare, e il mouse si prende quando è
+attaccato da solo, con una porta sola a disposizione.
+
+### 11.2 Il report
+
+Il mouse boot manda **tre** byte (qualcuno quattro, con la rotellina):
+
+| byte | contenuto |
+|---|---|
+| 0 | pulsanti (bit 0 = sinistro) |
+| 1 | spostamento X, **con segno** |
+| 2 | spostamento Y, **con segno** |
+
+Gli spostamenti sono **relativi**: si sommano alla posizione corrente, non la
+sostituiscono. E in HID il positivo va verso il basso, quindi la Y si somma
+direttamente.
+
+### 11.3 Trappola: il pacchetto corto
+
+**È il difetto che ci ha tenuto fermi una serata.** Un transfer event può
+chiudersi in due modi: *Success* oppure ***Short Packet*** (codice 13), che
+significa "il dispositivo ha mandato meno byte di quelli richiesti". In
+**entrambi i casi i byte che sono arrivati sono validi**.
+
+La tastiera manda 8 byte su un endpoint che ne accetta 8: un pacchetto corto
+non capita **mai**, e trattare il codice 13 come errore non si nota. Il mouse
+manda 4 byte su un endpoint che ne dichiara 7: **ogni report è un pacchetto
+corto**, e classificarlo come errore butta via ogni movimento del mouse — in
+silenzio, con la sola traccia di un contatore di errori che sale.
+
+Da qui la regola: **entrambi i codici sono esito buono**, e la lunghezza
+residua nel transfer event dice quanti byte sono realmente arrivati.
+
+### 11.4 Trappola: la dimensione di EP0 dipende dalla velocità
+
+Il contesto di EP0 va programmato con la dimensione massima del pacchetto di
+controllo, che **dipende dalla velocità del dispositivo**: 8 byte per low e
+full speed, **64 per high speed**. Un valore fisso a 8 va benissimo finché si
+prova solo una tastiera low speed; un mouse high speed, con 8, non si
+indirizza nemmeno.
+
+### 11.5 Trappola: una dimensione dichiarata fuori specifica
+
+La dimensione massima di un endpoint interrupt dev'essere una **potenza di
+due**. Il nostro mouse ne dichiara **7**. Il valore va riportato a un valore
+sensato (4, arrotondando per difetto) invece di passarlo al controller: il
+kernel Linux fa lo stesso, e adesso si capisce perché.
+
+### 11.6 La diagnostica che ha risolto
+
+Tre stampe, aggiunte dopo aver perso una serata a indovinare, e valgono più di
+qualunque ragionamento:
+
+- **il descrittore di configurazione in esadecimale**, quando è piccolo: le
+  interfacce, i protocolli e le dimensioni dei pacchetti sono lì dentro, e
+  senza i byte veri si interpreta invece di leggere;
+- **codice e byte ricevuti** dei primi report: distingue "non arrivano" da
+  "arrivano storti";
+- **il codice di errore** dei primi trasferimenti falliti: è quello che ci ha
+  detto che il codice 13 non era un errore ma un esito.

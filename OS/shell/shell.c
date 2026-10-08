@@ -205,7 +205,7 @@ static int read_line(char *buffer, int max) {
  */
 static int wait_char(void) {
     for (;;) {
-        int usb = usb_keyboard_getchar();
+        int usb = usb_input_getchar();
         if (usb >= 0) return usb;
 
         char serial = console_trygetchar();
