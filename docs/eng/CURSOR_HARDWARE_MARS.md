@@ -145,15 +145,27 @@ zero work either way.
 
 ---
 
-## 6. The second trap: turning it off
+## 6. The second trap: hiding the pointer
 
-The reference driver turns the cursor off with a write that, reproduced
-literally on this board, **does not turn it off**. The cursor stays visible and
-it looks as if the off command never arrived.
+`DC_CURSOR_CONFIG`, on this board, **does not turn the cursor off**: neither
+the reference driver's write reproduced literally (clearing two bits and
+setting one) nor clearing the **whole low field** does it. Both tried.
 
-What works here is clearing the **whole low field** (`0x1F`) and, for good
-measure, moving the position **off screen** (`0xFFFF`): the software keeps the
-real position, so switching the pointer back on returns it where it was.
+Worse: clearing the low field **also stops the mechanism that applies the
+position**. The cursor stays frozen on screen where it was, and can no longer
+be moved. The symptom is nasty — the command says "off" and the pointer is
+still there — and it is what happened to us the first time.
+
+What works, and costs **a single write**:
+
+1. the configuration is **always** written in the "enabled" form, even while
+   the pointer is off — rewriting the configuration is what makes the position
+   apply, so it must not be touched;
+2. to hide it, the **position** is moved off screen (`0xFFFF`).
+
+The software keeps the real position, so switching the pointer back on brings
+it back where it was, with no jump. Turning it on is one register sequence;
+turning it off is three writes.
 
 ---
 
@@ -171,6 +183,8 @@ All on hardware, not inferred:
 - size field `1` (64×64) is the right one;
 - clock gating **is not needed**: we never touched it;
 - the position applies when the configuration is rewritten, not on its own.
+- the configuration register **does not turn the cursor off**: hiding it takes
+  a transparent image (§6).
 
 ---
 

@@ -146,16 +146,28 @@ funzionano in entrambi i casi.
 
 ---
 
-## 6. La seconda trappola: spegnere
+## 6. La seconda trappola: nascondere il puntatore
 
-Il driver di riferimento spegne il cursore con una scrittura che, riprodotta
-alla lettera su questa scheda, **non lo spegne**. Il cursore resta visibile e
-si ha l'impressione che il comando di spegnimento non sia arrivato.
+`DC_CURSOR_CONFIG`, su questa scheda, **non spegne il cursore**: non lo fa la
+scrittura del driver di riferimento riprodotta alla lettera (azzera due bit e
+ne imposta uno) e non lo fa nemmeno azzerare **tutto il campo basso**. Provato
+entrambi.
 
-Quello che funziona qui è azzerare **tutto il campo basso** (`0x1F`) e, per
-sicurezza, portare anche la posizione **fuori dallo schermo** (`0xFFFF`): la
-posizione vera la tiene il software, quindi riaccendendo il puntatore torna
-dov'era.
+Peggio: azzerare il campo basso **ferma anche il meccanismo che applica la
+posizione**. Il cursore resta congelato sullo schermo dov'era, e da lì non si
+sposta più. Il sintomo è insidioso — il comando dice "spento" e il puntatore
+resta lì — ed è quello che ci è successo la prima volta.
+
+Il modo che funziona, e che costa **una sola scrittura**:
+
+1. la configurazione si scrive **sempre** nella forma "acceso", anche quando il
+   puntatore è spento — è la riscrittura della configurazione che fa applicare
+   la posizione, quindi non va toccata;
+2. per spegnere, la **posizione** va fuori dallo schermo (`0xFFFF`).
+
+La posizione vera la tiene il software, quindi riaccendendo il puntatore
+ricompare dov'era senza salti. Accendere è una sola sequenza di registri, e
+spegnere sono tre scritture.
 
 ---
 
@@ -174,6 +186,8 @@ Tutto sull'hardware, non dedotto:
 - il campo dimensione a `1` (64×64) è quello giusto;
 - il clock gating **non serve**: non lo abbiamo mai toccato;
 - la posizione si applica riscrivendo la configurazione, non da sola.
+- il registro di configurazione **non spegne** il cursore: per nasconderlo si
+  usa un'immagine trasparente (§6).
 
 ---
 

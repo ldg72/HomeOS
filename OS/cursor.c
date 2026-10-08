@@ -44,15 +44,9 @@
 #define CURSOR_CFG_SIZE_SHIFT  5u
 #define CURSOR_CFG_SIZE_MASK   0x07u
 #define CURSOR_CFG_CLEAR_MASK  0x00FFFFFFu
-/*
- * Spegnimento: si azzera tutto il campo basso, non solo i bit 0-1 come fa il
- * driver di riferimento. La sua scrittura, riprodotta alla lettera, su questa
- * scheda NON spegne il cursore — provato. Non sapendo quale dei bit bassi sia
- * l'abilitazione, si spengono tutti; per sicurezza la posizione viene anche
- * portata fuori dallo schermo, cosi' il puntatore sparisce in ogni caso.
- */
-#define CURSOR_CFG_OFF_MASK    0x1Fu
-
+/* Spegnimento, come nel driver di riferimento. */
+#define CURSOR_CFG_OFF_SET     0x08u   /* bit 3 */
+#define CURSOR_CFG_OFF_CLEAR   0x03u   /* bit 0 e 1 */
 static uint32_t g_image_offset;
 static uint32_t g_image_phys;
 static uint32_t g_placed_width;    /* risoluzione a cui l'immagine e' collocata */
@@ -65,26 +59,42 @@ static uint16_t g_x, g_y;
 
 /* --------------------------------------------------------------- registri */
 
-static void cursor_write_config(int enable) {
+/*
+ * La configurazione si scrive sempre nella forma "acceso": spegnere il
+ * cursore da qui non funziona su questa scheda (vedi cursor_paint_image), e
+ * riscrivere questo registro e' comunque necessario a ogni spostamento,
+ * perche' e' cosi' che il blocco ricarica la posizione.
+ */
+static void cursor_write_config(int enabled) {
+    uint32_t set = ((g_size_code & CURSOR_CFG_SIZE_MASK) << CURSOR_CFG_SIZE_SHIFT) |
+                   CURSOR_CFG_ENABLE_BITS;
+    uint32_t clear = CURSOR_CFG_CLEAR_MASK;
     uint32_t current = mmio_read32(DC + DC_CURSOR_CONFIG);
 
-    if (enable) {
-        const uint32_t value =
-            ((g_size_code & CURSOR_CFG_SIZE_MASK) << CURSOR_CFG_SIZE_SHIFT) |
-            CURSOR_CFG_ENABLE_BITS;
-        mmio_write32(DC + DC_CURSOR_CONFIG,
-                     (current & ~CURSOR_CFG_CLEAR_MASK) |
-                     (value & CURSOR_CFG_CLEAR_MASK));
-    } else {
-        mmio_write32(DC + DC_CURSOR_CONFIG, current & ~CURSOR_CFG_OFF_MASK);
+    if (!enabled) {
+        /* Come il driver di riferimento: azzera i bit 0-1 e lascia alto il
+         * bit 3. Da solo questo non nasconde il puntatore, e va bene: quando
+         * si arriva qui il cursore e' gia' stato portato fuori dallo
+         * schermo. */
+        set = CURSOR_CFG_OFF_SET;
+        clear = CURSOR_CFG_OFF_CLEAR;
     }
+
+    mmio_write32(DC + DC_CURSOR_CONFIG, (current & ~clear) | set);
 }
 
-static void cursor_write_location(void) {
-    /* Spento: la posizione va fuori dallo schermo, cosi' non si vede comunque.
-     * Acceso: torna dov'e', perche' la posizione la teniamo noi. */
-    const uint32_t x = g_enabled ? (uint32_t)g_x : 0xFFFFu;
-    const uint32_t y = g_enabled ? (uint32_t)g_y : 0xFFFFu;
+static void cursor_write_location(int enabled) {
+    /*
+     * Spento: la posizione va fuori dallo schermo. E' il modo piu' semplice ed
+     * economico di nascondere il puntatore, ma da solo non basta: va scritto
+     * mentre la configurazione e' ancora nella forma "acceso", perche' e' la
+     * sua riscrittura che fa applicare la posizione. E' il primo dei due passi
+     * di cursor_enable(0). La posizione vera la tiene il software, quindi
+     * riaccendendo il puntatore torna dov'era.
+     */
+    const uint32_t x = enabled ? (uint32_t)g_x : 0xFFFFu;
+    const uint32_t y = enabled ? (uint32_t)g_y : 0xFFFFu;
+
     mmio_write32(DC + DC_CURSOR_LOCATION, x | (y << 16));
 }
 
@@ -99,10 +109,10 @@ static void cursor_write_location(void) {
  * si riscrive il registro di configurazione, quindi ogni spostamento deve
  * passare da qui. Era una "ottimizzazione" mia, ed era sbagliata.
  */
-static void cursor_write_registers(void) {
+static void cursor_write_registers(int enabled) {
     mmio_write32(DC + DC_CURSOR_ADDRESS, g_image_phys);
-    cursor_write_location();
-    cursor_write_config(g_enabled);
+    cursor_write_location(enabled);
+    cursor_write_config(enabled);
 }
 
 /*
@@ -116,7 +126,6 @@ static int cursor_place_image(void) {
     const uint32_t width = display_width();
     const uint32_t height = display_height();
     uint32_t offset;
-    volatile uint32_t *image;
 
     if (width == 0u || height == 0u) return CURSOR_ERR_NO_DISPLAY;
 
@@ -125,15 +134,20 @@ static int cursor_place_image(void) {
 
     g_image_offset = offset;
     g_image_phys = MARSFB_PHYS + offset;
-    image = (volatile uint32_t *)(uintptr_t)(MARSFB_UNCACHED + offset);
+    g_placed_width = width;
+    g_placed_height = height;
+    return CURSOR_OK;
+}
+
+/* Ridisegna l'immagine con la forma corrente. Si fa quando cambia lo stato o
+ * la forma, non a ogni spostamento: sono 16 KiB di scritture non cachate. */
+static void cursor_paint_image(void) {
+    volatile uint32_t *image =
+        (volatile uint32_t *)(uintptr_t)(MARSFB_UNCACHED + g_image_offset);
 
     cursor_image_clear(image);
     cursor_image_draw(image, g_shape);
     mmio_fence();   /* l'immagine deve essere in memoria prima che la legga */
-
-    g_placed_width = width;
-    g_placed_height = height;
-    return CURSOR_OK;
 }
 
 /* Applica lo stato corrente, rifacendo la collocazione se serve. */
@@ -146,15 +160,15 @@ static void cursor_apply(void) {
             /* Non c'e' piu' posto (1080p): si spegne invece di mostrare
              * spazzatura, e il comando lo dira'. */
             g_enabled = 0;
-            cursor_write_config(0);
             g_ready = 0;
             return;
         }
+        cursor_paint_image();
         if (g_x >= display_width()) g_x = (uint16_t)(display_width() - 1u);
         if (g_y >= display_height()) g_y = (uint16_t)(display_height() - 1u);
     }
 
-    cursor_write_registers();
+    cursor_write_registers(g_enabled);
 }
 
 /* -------------------------------------------------------------- interfaccia */
@@ -176,7 +190,8 @@ int cursor_init(void) {
 
     g_ready = 1;
     g_enabled = 1;
-    cursor_write_registers();
+    cursor_paint_image();
+    cursor_write_registers(g_enabled);
     return CURSOR_OK;
 }
 
@@ -196,8 +211,29 @@ void cursor_move(int32_t x, int32_t y) {
 
 void cursor_enable(int on) {
     if (!g_ready) return;
-    g_enabled = on != 0;
-    cursor_apply();
+
+    if (on) {
+        g_enabled = 1;
+        cursor_write_registers(1);   /* la forma e' gia' nell'immagine */
+        return;
+    }
+
+    /*
+     * Spegnere, e l'ordine conta:
+     *
+     *  1. la posizione va fuori dallo schermo con la configurazione ancora
+     *     accesa. E' la riscrittura della configurazione che fa applicare la
+     *     posizione, quindi il puntatore esce davvero;
+     *  2. poi si spegne il blocco, che resta congelato la' fuori.
+     *
+     * Al contrario — spegnere e basta — il meccanismo che applica la
+     * posizione si ferma e il puntatore resta congelato sullo schermo, dove
+     * era: il comando dice "spento" e l'immagine e' ancora li'.
+     */
+    cursor_write_location(0);   /* fuori dallo schermo */
+    cursor_write_config(1);     /* ...e adesso la posizione viene applicata */
+    g_enabled = 0;
+    cursor_write_config(0);     /* solo ora si spegne il blocco */
 }
 
 int cursor_is_enabled(void) { return g_enabled; }
@@ -214,12 +250,8 @@ void cursor_set_shape(int shape) {
     if (shape < 0 || shape >= CURSOR_SHAPE_COUNT) return;
     g_shape = shape;
     if (g_ready) {
-        volatile uint32_t *image =
-            (volatile uint32_t *)(uintptr_t)(MARSFB_UNCACHED + g_image_offset);
-        cursor_image_clear(image);
-        cursor_image_draw(image, g_shape);
-        mmio_fence();
-        cursor_write_registers();
+        cursor_paint_image();
+        cursor_write_registers(g_enabled);
     }
 }
 
