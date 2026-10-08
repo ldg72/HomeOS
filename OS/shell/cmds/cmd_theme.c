@@ -1,6 +1,7 @@
 #include "../command.h"
 #include "../shell.h"
 #include "../../fbcon.h"
+#include "../../splash.h"
 #include "../../theme.h"
 
 SHELL_COMMAND(cmd_theme, "theme", "visual theme: 'theme' lists, 'theme N' applies") {
@@ -28,8 +29,18 @@ SHELL_COMMAND(cmd_theme, "theme", "visual theme: 'theme' lists, 'theme N' applie
         return;
     }
 
-    /* Il tema cambia colori e geometria della console: si ridisegna. */
-    fbcon_init();
+    /*
+     * Il tema cambia colori e geometria della console, quindi la schermata va
+     * rifatta. Nei temi classici l'intestazione E' il banner di avvio — righe
+     * di testo centrate, non una barra fissa — e la disegna la schermata di
+     * avvio: chiamare solo fbcon_init() lasciava la cornice senza
+     * intestazione, e sembrava che il tema non fosse stato applicato.
+     */
+    if (theme_is_classic()) {
+        splash_draw();
+    } else {
+        fbcon_init();
+    }
     shell_puts("theme applied: ");
     shell_puts(theme_current()->name);
     shell_puts("\n");

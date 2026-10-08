@@ -35,5 +35,5 @@ SHELL_COMMAND(cmd_reboot, "reboot", "restart the session; 'reboot sbi' asks Open
     /* Riavvio della sessione: sempre sicuro, non tocca l'hardware. */
     shell_puts("restarting the session\n");
     fbcon_init();
-    if (theme_is_retro()) fbcon_classic_banner();
+    if (theme_is_classic()) fbcon_classic_banner();
 }

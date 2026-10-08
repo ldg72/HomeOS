@@ -37,6 +37,31 @@ static uint32_t text_y(void) { return g_text_y; }
 
 static void draw_glyph(uint32_t x, uint32_t y, char c, uint32_t color);
 
+/* Altezza della barra del titolo: quella dichiarata dal tema, o quella di
+ * serie. La usano sia il disegno sia il calcolo dell'area di testo. */
+static uint32_t header_height(void) {
+    return g_theme->header_h ? g_theme->header_h : HEADER_H;
+}
+
+/*
+ * Testo della barra. Alcuni temi lo vogliono col carattere della console
+ * invece che con quello delle scritte grandi: sono due font diversi, e sulla
+ * stessa riga si vede.
+ */
+static uint32_t header_text_width(const char *text) {
+    uint32_t length = 0;
+    while (text[length]) length++;
+    return length * CELL_W;
+}
+
+static void header_text(uint32_t x, uint32_t y, const char *text, uint32_t color) {
+    if (!g_theme->header_console_font) {
+        gfx_text(x, y, text, color, 1u);
+        return;
+    }
+    for (; *text; text++, x += CELL_W) draw_glyph(x, y, *text, color);
+}
+
 static int u32_to_text(uint32_t value, char *out) {
     char tmp[11];
     int n = 0;
@@ -113,10 +138,10 @@ static void draw_cursor(void) {
     if (g_col >= g_cols || g_row >= g_rows) return;
     uint32_t x = g_x0 + g_col * CELL_W;
     uint32_t y = text_y() + g_row * CELL_H;
-    if (g_theme->retro) {
-        gfx_fill_rect(x, y, CELL_W, CELL_H, g_theme->accent);
+    if (g_theme->block_cursor) {
+        gfx_fill_rect(x, y, CELL_W, CELL_H, g_theme->cursor);
     } else {
-        gfx_fill_rect(x, y + CELL_H - 2u, CELL_W, 2u, g_theme->accent);
+        gfx_fill_rect(x, y + CELL_H - 2u, CELL_W, 2u, g_theme->cursor);
     }
     g_cursor_col = g_col;
     g_cursor_row = g_row;
@@ -143,31 +168,49 @@ static void render_header(void) {
     const uint32_t w = gfx_width();
     const uint32_t h = gfx_height();
 
-    if (g_theme->border) {
-        /* Stile classico: cornice piena invece della barra. L'interno si
-         * riempie tutto d'un colpo: riempire a pezzi lasciava scoperto il
-         * margine destro e la riga vuota sotto l'intestazione, che apparivano
-         * come una fascia del colore del contorno. */
-        gfx_fill_rect(0, 0, w, h, g_theme->border);
-        gfx_fill_rect(g_x0, g_y0, w - 2u * g_x0, h - 2u * g_y0, g_theme->bg);
+    /* Cornice e area interna si riempiono tutto d'un colpo: riempire a pezzi
+     * lasciava scoperto il margine destro e la riga vuota sotto
+     * l'intestazione, che apparivano come una fascia del colore del contorno. */
+    gfx_fill_rect(0, 0, w, h,
+                  g_theme->border_div ? g_theme->border : g_theme->bg);
+    gfx_fill_rect(g_x0, g_y0, w - 2u * g_x0, h - 2u * g_y0, g_theme->bg);
 
-        /* Nel tema classico non c'e' intestazione fissa: banner e dati sono
-         * righe di testo scritte all'avvio, che scorrono via con il resto
-         * della console. Qui si disegna soltanto la cornice. */
-        return;
-    }
+    /* Nel tema classico non c'e' intestazione fissa: banner e dati sono righe
+     * di testo scritte all'avvio, che scorrono via con il resto della
+     * console. Qui si disegna soltanto la cornice. */
+    if (g_theme->classic) return;
 
-    gfx_fill_rect(0, 0, w, HEADER_H, g_theme->header_bg);
-    gfx_fill_rect(0, HEADER_H - 2u, w, 2u, g_theme->accent);
+    const uint32_t bar_w = w - 2u * g_x0;
+    const uint32_t bar_h = g_theme->header_h ? g_theme->header_h : HEADER_H;
+    /* Con le due righe orizzontali la scritta si centra nella barra; senza,
+     * resta a sette pixel dall'alto come e' sempre stata. */
+    const uint32_t text_y = g_y0 + (g_theme->header_stripes ? (bar_h - CELL_H) / 2u : 7u);
 
-    const char *title = "HomeOS " HOMEOS_VERSION;
-    gfx_text(8u, 7u, title, g_theme->accent, 1u);
+    gfx_fill_rect(g_x0, g_y0, bar_w, bar_h, g_theme->header_bg);
 
+    const char *title = g_theme->header_title;
     const char *right = HOMEOS_ARCH;
-    uint32_t rlen = 0;
-    while (right[rlen]) rlen++;
-    uint32_t rw = rlen * CELL_W;
-    if (w > rw + 16u) gfx_text(w - rw - 8u, 7u, right, g_theme->muted, 1u);
+    const uint32_t title_w = header_text_width(title);
+    const uint32_t right_w = header_text_width(right);
+    const uint32_t right_x = (bar_w > right_w + 16u) ? (w - right_w - 8u) : 0u;
+
+    header_text(g_x0 + 8u, text_y, title, g_theme->header_text);
+    if (right_x) header_text(right_x, text_y, right, g_theme->muted);
+
+    if (g_theme->header_stripes) {
+        /* Due righe del colore di sfondo, continue, fra le due scritte. */
+        const uint32_t thickness = 3u;
+        const uint32_t x0 = g_x0 + 8u + title_w + 8u;
+        const uint32_t x1 = right_x ? (right_x - 8u) : (w - g_x0 - 8u);
+        const uint32_t top = text_y + 3u;
+
+        if (x1 > x0) {
+            gfx_fill_rect(x0, top, x1 - x0, thickness, g_theme->bg);
+            gfx_fill_rect(x0, top + thickness + 3u, x1 - x0, thickness, g_theme->bg);
+        }
+    } else {
+        gfx_fill_rect(g_x0, g_y0 + bar_h - 2u, bar_w, 2u, g_theme->accent);
+    }
 }
 
 static void scroll_up(void) {
@@ -254,17 +297,22 @@ static void fbcon_setup(void) {
 
     const uint32_t w = gfx_width();
     const uint32_t h = gfx_height();
-    /* Nel tema classico il bordo e' spesso un ventiquattresimo dell'altezza,
-     * come sulle macchine a 8 bit dove occupava una porzione fissa del quadro. */
-    const uint32_t border = g_theme->border ? (h / 24u) : 0u;
+    /* Quando c'e' una cornice e' spessa un ventiquattresimo dell'altezza, come
+     * sulle macchine a 8 bit dove occupava una porzione fissa del quadro — ma
+     * la porzione e' del tema: il C64 ha una cornice sottile, il C128 in 80
+     * colonne un riquadro molto piu' stretto. La geometria del testo invece
+     * dipende dallo stile, non dalla cornice. */
+    const uint32_t margin = g_theme->border_div ? (h / g_theme->border_div) : 0u;
 
-    g_x0 = border;
-    g_y0 = border;
+    g_x0 = margin;
+    g_y0 = margin;
     g_header_lines = 0u;
-    g_text_y = g_theme->border ? border : HEADER_H;
+    /* La barra del titolo sta dentro la cornice, quindi il testo comincia
+     * dopo entrambe. Nello stile classico la barra non c'e'. */
+    g_text_y = g_theme->classic ? margin : (margin + header_height());
 
-    g_cols = (w - 2u * border) / CELL_W;
-    g_rows = (h - g_text_y - border) / CELL_H;
+    g_cols = (w - 2u * margin) / CELL_W;
+    g_rows = (h - g_text_y - margin) / CELL_H;
     if (g_cols > MAX_COLS) g_cols = MAX_COLS;
     if (g_rows > MAX_ROWS) g_rows = MAX_ROWS;
 }

@@ -1,16 +1,20 @@
 /*
  * HomeOS — schermata di avvio.
  *
- * Composizione volutamente essenziale: sfondo scuro sfumato, un marchio
- * geometrico (badge arrotondato con la H), il nome, e in piccolo versione,
- * architettura e scheda. Tutto disegnato con primitive nostre: nessuna
- * risorsa esterna, nessun font di sistema.
+ * Composizione: sfondo scuro sfumato, un marchio geometrico (badge
+ * arrotondato con la H), il nome, e in piccolo architettura, scheda, Core e
+ * versione. Tutto disegnato con primitive nostre: nessuna risorsa esterna,
+ * nessun font di sistema.
+ *
+ * Le quote sono frazioni dell'altezza, non pixel fissi: 480, 720 e 1080 righe
+ * danno lo stesso disegno, riempito allo stesso modo. I testi usano fattori
+ * interi — il font resta nitido solo a multipli interi — quindi la scala si
+ * sceglie a scaglioni di altezza.
  */
 
 #include "splash.h"
 #include "display.h"
 #include "fbcon.h"
-#include "font_topaz.h"
 #include "gfx.h"
 #include "theme.h"
 #include "version.h"
@@ -23,10 +27,75 @@
 #define COL_TEXT     0xFFCFE6F2u
 #define COL_MUTED    0xFF7F8C9Bu
 #define COL_FOOT     0xFF6B7A8Cu
+#define COL_GLOW     0xFF1B3A4Bu
+
+static uint32_t scale_between(uint32_t value, uint32_t low, uint32_t high) {
+    if (value < low) return low;
+    if (value > high) return high;
+    return value;
+}
+
+void splash_compose(volatile uint32_t *buffer, uint32_t w, uint32_t h) {
+    gfx_init(buffer, w, h);
+
+    /* Sfondi e quote: tutto in frazioni di h. */
+    gfx_vgradient(0, 0, w, h, COL_BG_TOP, COL_BG_BOT);
+
+    /*
+     * Scale dei testi, a scaglioni:
+     *   480  ->  2 / 1 / 1        720  ->  3 / 2 / 1        1080 -> 4 / 3 / 2
+     */
+    const uint32_t title_scale = scale_between(h / 240u, 2u, 4u);
+    const uint32_t sub_scale   = scale_between(h / 360u, 1u, 3u);
+    const uint32_t small_scale = scale_between(h / 540u, 1u, 2u);
+
+    /* Marchio: badge arrotondato con sfumatura ciano -> blu. */
+    const uint32_t badge   = h / 5u;
+    const uint32_t radius  = badge / 5u;
+    const uint32_t ring    = scale_between(badge / 40u, 2u, 5u);
+    const uint32_t bx      = (w - badge) / 2u;
+    const uint32_t by      = h * 15u / 100u;
+
+    /* Un alone appena accennato stacca il badge dal fondo. */
+    gfx_rounded_rect(bx - ring, by - ring, badge + 2u * ring, badge + 2u * ring,
+                     radius + ring, COL_GLOW);
+    gfx_rounded_gradient(bx, by, badge, badge, radius, COL_ACCENT, COL_ACCENT2);
+
+    /* La H, in negativo dentro il badge. */
+    const uint32_t stroke  = badge / 6u;
+    const uint32_t margin  = badge * 22u / 100u;
+    const uint32_t arm_y   = by + badge * 25u / 100u;
+    const uint32_t arm_h   = badge * 50u / 100u;
+    const uint32_t right_x = bx + badge - margin - stroke;
+
+    gfx_fill_rect(bx + margin, arm_y, stroke, arm_h, COL_WHITE);
+    gfx_fill_rect(right_x, arm_y, stroke, arm_h, COL_WHITE);
+    gfx_fill_rect(bx + margin, by + badge / 2u - stroke / 2u,
+                  badge - 2u * margin, stroke, COL_WHITE);
+
+    /* Nome, grande, con sfumatura bianco -> ciano. */
+    gfx_text_centered_gradient(h * 42u / 100u, "HomeOS",
+                              COL_WHITE, COL_ACCENT, title_scale);
+
+    /* Riga di separazione. */
+    gfx_fill_rect((w - h * 28u / 100u) / 2u, h * 58u / 100u,
+                  h * 28u / 100u, scale_between(h / 240u, 2u, 4u), COL_ACCENT);
+
+    /* Macchina e architettura. */
+    gfx_text_centered(h * 62u / 100u, "RISC-V 64-bit", COL_TEXT, sub_scale);
+    gfx_text_centered(h * 68u / 100u, HOMEOS_BOARD, COL_MUTED, sub_scale);
+
+    /* Core sottostante e versione: le due righe piu' minute. */
+    gfx_text_centered(h * 75u / 100u,
+                      "running on " HOMEOS_CORE_NAME " " HOMEOS_CORE_VERSION,
+                      COL_MUTED, small_scale);
+    gfx_text_centered(h * 83u / 100u,
+                      "HomeOS " HOMEOS_VERSION " \"" HOMEOS_CODENAME "\"  -  " __DATE__,
+                      COL_FOOT, small_scale);
+}
 
 void splash_draw(void) {
-    const struct theme_colors *theme = theme_current();
-    if (theme->retro) {
+    if (theme_is_classic()) {
         /* Nel tema classico la schermata di avvio e' la console stessa: si
          * prepara e si scrive il banner come testo, cosi' scorre via. */
         fbcon_init();
@@ -34,50 +103,5 @@ void splash_draw(void) {
         return;
     }
 
-    const uint32_t w = display_width();
-    const uint32_t h = display_height();
-    gfx_init(display_buffer(), w, h);
-
-    /*
-     * La composizione e' definita su una tela di 480 righe e scala con la
-     * risoluzione: a 1080p marchio e testi raddoppiano, e il blocco resta
-     * centrato in verticale invece di restare piccolo in alto.
-     */
-    const uint32_t s = (h >= 1000u) ? 2u : 1u;
-    const uint32_t content_h = 400u * s;
-    const uint32_t top = (h > content_h) ? (h - content_h) / 2u : 0u;
-
-    /* Sfondo: sfumatura verticale scura. */
-    gfx_vgradient(0, 0, w, h, COL_BG_TOP, COL_BG_BOT);
-
-    /* Marchio: badge arrotondato con sfumatura ciano -> blu. */
-    const uint32_t bw = 120u * s;
-    const uint32_t bx = (w - bw) / 2u;
-    const uint32_t by = top + 34u * s;
-    gfx_rounded_gradient(bx, by, bw, bw, 26u * s, COL_ACCENT, COL_ACCENT2);
-
-    /* H in negativo dentro il badge. */
-    gfx_fill_rect(bx + 26u * s, by + 30u * s, 16u * s, 60u * s, COL_WHITE);
-    gfx_fill_rect(bx + 78u * s, by + 30u * s, 16u * s, 60u * s, COL_WHITE);
-    gfx_fill_rect(bx + 26u * s, by + 52u * s, 68u * s, 16u * s, COL_WHITE);
-
-    /* Nome, grande, con sfumatura bianco -> ciano. */
-    gfx_text_centered_gradient(top + 188u * s, "HomeOS", COL_WHITE, COL_ACCENT, 4u * s);
-
-    /* Riga di separazione. */
-    gfx_fill_rect((w - 120u * s) / 2u, top + 272u * s, 120u * s, 3u * s, COL_ACCENT);
-
-    /* Architettura e scheda, in piccolo. */
-    gfx_text_centered(top + 292u * s, HOMEOS_ARCH "  -  RISC-V 64-bit", COL_TEXT, 2u * s);
-    gfx_text_centered(top + 328u * s, HOMEOS_BOARD, COL_MUTED, 2u * s);
-
-    /* Core sottostante. */
-    gfx_text_centered(top + 364u * s,
-                      "running on " HOMEOS_CORE_NAME " " HOMEOS_CORE_VERSION,
-                      COL_MUTED, 1u * s);
-
-    /* Piede: versione e data di build, minuto. */
-    gfx_text_centered(top + 404u * s,
-                      "HomeOS " HOMEOS_VERSION " \"" HOMEOS_CODENAME "\"  -  " __DATE__,
-                      COL_FOOT, 1u * s);
+    splash_compose(display_buffer(), display_width(), display_height());
 }

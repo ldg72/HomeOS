@@ -39,15 +39,17 @@ CFLAGS := -std=gnu11 -ffreestanding -nostdlib -O2 -g1 -Wall -Wextra \
           -DARCH_RISCV64 -DCOMPILING_APP \
           -I$(SDK_DIR)/include -I$(SDK_DIR)/arch/riscv64/include
 
-# Risoluzione di avvio. Default 640x480: e' la risoluzione della modalita'
-# classica, che e' anche quella di avvio.
+# Risoluzione di avvio: 1280x720, la stessa della modalita' moderna, cosi' lo
+# splash e la console hanno spazio per respirare. La modalita' classica passa
+# da sola a 640x480 con il comando 'retro'.
 # Altre scelte: make BOOT_W=1280 BOOT_H=720   oppure   BOOT_W=1920 BOOT_H=1080
-BOOT_W     ?= 640
-BOOT_H     ?= 480
+BOOT_W     ?= 1280
+BOOT_H     ?= 720
 CFLAGS     += -DHOMEOS_BOOT_WIDTH=$(BOOT_W) -DHOMEOS_BOOT_HEIGHT=$(BOOT_H)
 
-# Tema di avvio: 1 = modern, 2 = retro. Si parte in modalita' classica.
-THEME      ?= 2
+# Tema di avvio: 1 = modern, 2 = retro. Si parte in moderno — HomeOS ha una
+# sua identita' — e la modalita' classica si attiva con il comando 'retro'.
+THEME      ?= 1
 CFLAGS     += -DHOMEOS_DEFAULT_THEME=$(THEME)
 
 LDFLAGS := -Wl,-q -Wl,--gc-sections -Wl,--no-dynamic-linker -Wl,-e,_start

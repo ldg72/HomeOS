@@ -62,7 +62,7 @@ void homeos_boot(void) {
         services_delay_ms(3000);
         /* Nel tema classico la console e' gia' pronta con il banner scritto
          * come testo: non va ridisegnata, o il banner sparirebbe subito. */
-        if (!theme_is_retro()) fbcon_init();
+        if (!theme_is_classic()) fbcon_init();
 
         /* La tastiera USB si tenta subito; se non risponde si resta sulla
          * seriale, che e' sempre disponibile. */

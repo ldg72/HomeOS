@@ -103,17 +103,23 @@ void shell_puthex64(uint64_t value) {
 }
 
 /*
- * Prompt. Nel tema classico e' "READY." su una riga sua, con il cursore sulla
- * riga sotto: e' il modo in cui si presentava la macchina originale, e cosi'
- * la schermata di avvio e la console diventano la stessa cosa.
+ * Prompt. Nel tema classico sta su una riga sua, con il cursore sulla riga
+ * sotto: e' il modo in cui si presentava la macchina originale, e cosi' la
+ * schermata di avvio e la console diventano la stessa cosa. Il testo lo porta
+ * il tema ("READY." sul C64, "1>" sulla shell dell'Amiga).
  */
 static void shell_prompt(void) {
-    if (theme_is_retro()) {
-        os_puts("\nREADY.\n");
-        fbcon_puts_accent("\nREADY.\n");
+    const char *prompt = theme_current()->prompt;
+    if (theme_is_classic()) {
+        os_puts("\n");
+        os_puts(prompt);
+        os_puts("\n");
+        fbcon_puts_accent("\n");
+        fbcon_puts_accent(prompt);
+        fbcon_puts_accent("\n");
     } else {
-        os_puts("HomeOS> ");
-        fbcon_puts_accent("HomeOS> ");
+        os_puts(prompt);
+        fbcon_puts_accent(prompt);
     }
 }
 
@@ -193,7 +199,7 @@ void shell_run(void) {
 
     /* Nel tema classico non si annuncia nulla: dopo il banner compare
      * direttamente il prompt, come sulla macchina originale. */
-    if (!theme_is_retro()) {
+    if (!theme_is_classic()) {
         shell_puts("\nHomeOS shell - type 'help' for the command list\n");
     }
 
